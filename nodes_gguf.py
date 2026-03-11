@@ -295,6 +295,8 @@ class Qwen35GGUF:
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=300,
         )
 
@@ -319,6 +321,11 @@ class Qwen35GGUF:
     def _extract_thinking(text: str) -> tuple[str, str]:
         """Extract thinking content and clean response. Returns (response, thinking)."""
         thinking = ""
+
+        if not text:
+            return "", ""
+
+        text = str(text)
 
         # Case 1: Complete <think>...</think> block
         match = THINK_BLOCK_RE.search(text)
