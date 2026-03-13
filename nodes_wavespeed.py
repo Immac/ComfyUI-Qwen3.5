@@ -17,6 +17,7 @@ from PIL import Image
 THINK_BLOCK_RE = re.compile(r"<think[^>]*>.*?</think>", flags=re.IGNORECASE | re.DOTALL)
 
 MODELS = {
+    "Qwen3.5-9B": "qwen/qwen3.5-9b",
     "Qwen3.5-35B-A3B (cheapest)": "qwen/qwen3.5-35b-a3b",
     "Qwen3.5-Flash": "qwen/qwen3.5-flash-02-23",
     "Qwen3.5-27B": "qwen/qwen3.5-27b",

@@ -273,6 +273,7 @@ pip install openai
 
 | Model | Pricing (input/output per M tokens) |
 |-------|--------------------------------------|
+| Qwen3.5-9B | — |
 | Qwen3.5-35B-A3B | $0.16 / $1.30 (cheapest) |
 | Qwen3.5-Flash | — |
 | Qwen3.5-27B | $0.20 / $1.60 |
