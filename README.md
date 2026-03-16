@@ -2,7 +2,8 @@
 
 Custom ComfyUI nodes for the [Qwen3.5](https://huggingface.co/collections/Qwen/qwen35) family — unified natively multimodal models with image, video, and text understanding.
 
-Four nodes included:
+Five nodes included:
+- **Qwen 3.5 Loader** — discovers local transformers checkpoints from ComfyUI model paths
 - **Qwen 3.5** — transformers-based, supports image + video + text, FP16/8-bit/4-bit quantization
 - **Qwen 3.5 (GGUF)** — llama.cpp-based, **9x faster** (152 tok/s vs 17 tok/s), uses GGUF quantized models
 - **Qwen 3.5 (WaveSpeed API)** — cloud API, no local GPU needed, access up to 397B parameter models
@@ -16,10 +17,20 @@ Four nodes included:
 - **Video understanding** — summarize or analyze video content (transformers node)
 - **Text generation** — pure text tasks (reasoning, writing, coding)
 - **Thinking mode** — optional chain-of-thought reasoning before response
+- **Local-only model resolution** — no automatic downloads for transformers or GGUF models
+- **Recursive model discovery** — finds models in nested folders under configured `qwen3_5` roots
 - **GGUF inference** — 152 tokens/second via llama.cpp (Q4_K_XL on RTX PRO 6000)
 - **Quantization** — FP16, 8-bit, 4-bit (transformers) or GGUF quantizations (Q4-Q8, BF16)
 - **CPU support** — both nodes work on CPU (transformers uses FP32, GGUF needs llama.cpp built without CUDA)
-- **ComfyUI compatible** — automatically handles `cudaMallocAsync` compatibility
+- **ComfyUI compatible** — disables transformers async weight loading to avoid `cudaMallocAsync` OOM issues
+
+## Quick Start
+
+1. Install the node into `ComfyUI/custom_nodes/`.
+2. Install the dependency set for the backend you want to use.
+3. Put local models under the `qwen3_5` model path or `ComfyUI/models/LLM/`.
+4. For transformers, use **Qwen 3.5 Loader** -> **Qwen 3.5**.
+5. For GGUF, build `llama-mtmd-cli`, then use **Qwen 3.5 (GGUF)** directly.
 
 ## Installation
 
@@ -44,7 +55,7 @@ pip install -r ComfyUI-Qwen3.5/requirements.txt -r ComfyUI-Qwen3.5/requirements-
 pip install -r ComfyUI-Qwen3.5/requirements.txt -r ComfyUI-Qwen3.5/requirements-gguf.txt
 ```
 
-The GGUF node requires [llama.cpp](https://github.com/ggml-org/llama.cpp) — see [Building llama.cpp](#building-llamacpp) below.
+The GGUF node also requires a locally built [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-mtmd-cli` binary. The pip requirements file does not provide that binary by itself. See [Building llama.cpp](#building-llamacpp) below.
 
 ### Both nodes
 
@@ -60,12 +71,13 @@ pip install -r ComfyUI-Qwen3.5/requirements.txt \
 
 ## Model Paths (`qwen3_5`)
 
-Both local nodes now use a ComfyUI-native model path key named `qwen3_5`.
+The local transformers and GGUF nodes use a ComfyUI-native model path key named `qwen3_5`.
 
 - Automatic downloads are disabled.
 - Models must already exist on disk.
 - `ComfyUI/models/LLM/` is registered as the default `qwen3_5` path.
 - You can add as many additional model directories as needed via ComfyUI extra model paths.
+- Search is recursive, so nested subfolders are allowed.
 
 Example `extra_model_paths.yaml`:
 
@@ -75,11 +87,26 @@ qwen3_5:
     - /home/user/shared_models/qwen
 ```
 
-The node searches all configured `qwen3_5` paths in order.
+Discovery scans every configured `qwen3_5` root plus the default fallback root.
+
+In practice, discovery works like this:
+
+1. Read every configured `qwen3_5` root from ComfyUI.
+2. Always include `ComfyUI/models/LLM/` as a fallback root.
+3. Recursively scan each root for supported model layouts.
+
+That means these layouts are both valid:
+
+```text
+ComfyUI/models/LLM/Qwen3.5-9B/
+/mnt/models/qwen/vision/Qwen3.5-9B/
+```
 
 ### Transformers node
 
-Place the full model folder at:
+The loader discovers any folder containing `config.json` under a `qwen3_5` root.
+
+Place a full transformers checkpoint at:
 
 ```
 ComfyUI/models/LLM/<model-name>/
@@ -98,6 +125,14 @@ ComfyUI/models/LLM/Qwen3.5-9B/
 └── ...
 ```
 
+Nested folders also work. For example:
+
+```text
+/mnt/fast_models/qwen/vision/Qwen3.5-9B/config.json
+```
+
+The loader will expose that model as `vision/Qwen3.5-9B`.
+
 You can download the model files manually from HuggingFace:
 - [Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B) → `ComfyUI/models/LLM/Qwen3.5-0.8B/`
 - [Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B) → `ComfyUI/models/LLM/Qwen3.5-2B/`
@@ -106,6 +141,8 @@ You can download the model files manually from HuggingFace:
 - [Qwen3.5-27B](https://huggingface.co/Qwen/Qwen3.5-27B) → `ComfyUI/models/LLM/Qwen3.5-27B/`
 
 ### GGUF node
+
+The GGUF node discovers folders ending with `-GGUF` under a `qwen3_5` root. Each folder must contain at least one model `.gguf` file, and image input additionally requires `mmproj-BF16.gguf`.
 
 Place GGUF files at:
 
@@ -119,6 +156,12 @@ For example, for Qwen3.5-9B Q4_K_XL:
 ComfyUI/models/LLM/Qwen3.5-9B-GGUF/
 ├── Qwen3.5-9B-UD-Q4_K_XL.gguf      ← the model
 └── mmproj-BF16.gguf                  ← vision projector (required for image input)
+```
+
+Nested folders also work here:
+
+```text
+/mnt/fast_models/qwen/gguf/Qwen3.5-9B-GGUF/
 ```
 
 The GGUF filename format is `<model>-<quantization>.gguf`, with `UD-` prefix for Unsloth Dynamic quantizations (XL variants).
@@ -178,11 +221,50 @@ The node searches for `llama-mtmd-cli` in this order:
 
 ---
 
+## Workflows
+
+Two example workflows are included in [workflows/qwen3.5.json](workflows/qwen3.5.json) and [workflows/qwen3.5_gguf.json](workflows/qwen3.5_gguf.json).
+
+- [workflows/qwen3.5.json](workflows/qwen3.5.json) shows the transformers path: **Load Image** -> **Qwen 3.5 Loader** -> **Qwen 3.5**.
+- [workflows/qwen3.5_gguf.json](workflows/qwen3.5_gguf.json) shows the GGUF path: **Load Image** -> **Qwen 3.5 (GGUF)**.
+
+Use these as the reference wiring if you want to verify node connections quickly.
+
+---
+
+## Node: Qwen 3.5 Loader
+
+Local model loader for the transformers backend. Found under **Qwen3.5** in the node menu.
+
+This node follows the normal ComfyUI loader/consumer pattern:
+
+1. **Qwen 3.5 Loader** discovers local checkpoints from `qwen3_5` paths.
+2. It outputs a `QWEN35_MODEL` handle.
+3. **Qwen 3.5** consumes that handle through its `clip` input.
+
+### Inputs
+
+| Input | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model` | dropdown | Qwen3.5-9B if available | Discovered recursively from `qwen3_5` roots. A folder must contain `config.json`. |
+
+### Outputs
+
+| Output | Type | Description |
+|--------|------|-------------|
+| `clip` | QWEN35_MODEL | Model handle passed into **Qwen 3.5** |
+
+If no local transformers models are found, the dropdown will show a placeholder instead of downloading anything.
+
+---
+
 ## Node: Qwen 3.5
 
 Transformers-based node. Found under **Qwen3.5** in the node menu. Supports image, video, and text.
 
 Works on both GPU (CUDA) and CPU. On CPU, models load in FP32 (slower but functional).
+
+Connect the `clip` input to **Qwen 3.5 Loader**. This node does not own model discovery itself.
 
 ### Inputs
 
@@ -204,7 +286,12 @@ Works on both GPU (CUDA) and CPU. On CPU, models load in FP32 (slower but functi
 | `video` | IMAGE | optional | Video frames (batch of images) |
 | `frame_count` | INT | 16 | Max frames to sample from video |
 
-Model selection is handled by **Qwen 3.5 Loader**, which discovers local models from `qwen3_5` paths (folders containing `config.json`).
+### Outputs
+
+| Output | Type | Description |
+|--------|------|-------------|
+| `RESPONSE` | STRING | Model response with any thinking block removed |
+| `THINKING` | STRING | Extracted `<think>...</think>` reasoning, if present |
 
 ### Common Model Sizes
 
@@ -243,6 +330,13 @@ Works on both GPU and CPU. For CPU-only, set `n_gpu_layers` to `0` and build lla
 | `seed` | INT | 1 | Random seed |
 | `image` | IMAGE | optional | Image for vision tasks |
 | `cli_path` | STRING | `""` | Path to llama-mtmd-cli (auto-detected if empty) |
+
+### Outputs
+
+| Output | Type | Description |
+|--------|------|-------------|
+| `RESPONSE` | STRING | Model response with any thinking block removed |
+| `THINKING` | STRING | Extracted `<think>...</think>` reasoning, if present |
 
 ### GGUF Quantizations
 
@@ -315,15 +409,6 @@ Utility node to download an image from any public URL and output it as a ComfyUI
 | `IMAGE` | IMAGE | Downloaded image as tensor |
 | `URL` | STRING | Pass-through of the input URL |
 
----
-
-## Output (Qwen 3.5 nodes)
-
-| Output | Type | Description |
-|--------|------|-------------|
-| `RESPONSE` | STRING | Model's text response (thinking stripped) |
-| `THINKING` | STRING | Extracted reasoning content (empty if thinking disabled) |
-
 ## Recommended Sampling Parameters
 
 From the [Qwen3.5 README](https://huggingface.co/Qwen/Qwen3.5-9B):
@@ -362,21 +447,33 @@ Both nodes work without a GPU:
 - **Transformers node**: Just select a model — it auto-detects CPU and uses FP32. 8-bit/4-bit quantization requires a CUDA GPU.
 - **GGUF node**: Build llama.cpp without `-DGGML_CUDA=ON` and set `n_gpu_layers` to `0`.
 
-### Models not downloading
+### No models appear in the dropdown
 
-If auto-download fails, place models manually — see [Model Paths](#model-paths-manual-placement) above.
+This node pack does not download local models automatically.
+
+- For transformers, make sure the model folder contains `config.json` somewhere under a configured `qwen3_5` root.
+- For GGUF, make sure the folder ends with `-GGUF` and contains `.gguf` files.
+- If you use `extra_model_paths.yaml`, verify the key is exactly `qwen3_5`.
+- If the path is nested, that is fine; discovery is recursive.
+
+### File-not-found errors during execution
+
+The loader and runtime path resolution are both local-only. If execution fails, check that the selected model still exists on disk under one of the configured `qwen3_5` roots.
+
+- Transformers expects a resolved model directory containing `config.json`.
+- GGUF expects `<model>-<quantization>.gguf` and, for image tasks, `mmproj-BF16.gguf`.
 
 ## Requirements
 
 **Transformers node:**
 - `transformers >= 5.2.0`
 - `torch`
+- `torchvision`
 - `bitsandbytes` (for quantization, GPU only)
 - `accelerate`
 
 **GGUF node:**
 - `llama-mtmd-cli` binary (built from [llama.cpp](https://github.com/ggml-org/llama.cpp) source)
-- `huggingface-hub` (for auto model downloads)
 - `numpy`, `Pillow`, `torch`
 
 ## License
