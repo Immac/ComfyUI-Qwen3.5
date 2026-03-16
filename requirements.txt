@@ -1,5 +1,4 @@
 # Shared (both nodes)
-huggingface-hub
 numpy
 Pillow
 torch

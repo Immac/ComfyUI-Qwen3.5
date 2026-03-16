@@ -6,3 +6,4 @@ Use short tag IDs (example: `QWEN-001`).
 
 | ID | Title | Status | Area | Updated | File |
 | --- | --- | --- | --- | --- | --- |
+| QWEN-001 | Model Loading Migration to Vanilla ComfyUI Paths | Solved | Loaders / Dependencies / Docs | 2026-03-16 | [solved/QWEN-001-vanilla-model-paths.md](solved/QWEN-001-vanilla-model-paths.md) |

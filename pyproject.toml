@@ -7,7 +7,6 @@ dependencies = [
     "torch",
     "numpy",
     "Pillow",
-    "huggingface_hub",
 ]
 
 [project.urls]

@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
-from huggingface_hub import snapshot_download
 
 try:
     from transformers import AutoModelForImageTextToText as AutoVLModel
@@ -33,6 +32,44 @@ MODELS = {
 MODEL_OPTIONS = list(MODELS.keys())
 QUANTIZATION_OPTIONS = ["FP16", "8-bit", "4-bit"]
 THINK_BLOCK_RE = re.compile(r"<think[^>]*>.*?</think>", flags=re.IGNORECASE | re.DOTALL)
+QWEN_PATH_KEY = "qwen3_5"
+
+
+def _get_qwen_base_dirs() -> list[Path]:
+    """Return configured qwen3_5 search roots, always including models/LLM fallback."""
+    raw_paths = []
+    get_folder_paths = getattr(folder_paths, "get_folder_paths", None)
+    if callable(get_folder_paths):
+        try:
+            raw_paths.extend(get_folder_paths(QWEN_PATH_KEY) or [])
+        except Exception:
+            pass
+
+    if not raw_paths:
+        names_and_paths = getattr(folder_paths, "folder_names_and_paths", {})
+        entry = names_and_paths.get(QWEN_PATH_KEY)
+        if isinstance(entry, (tuple, list)) and entry:
+            candidate_paths = entry[0]
+            if isinstance(candidate_paths, (tuple, list, set)):
+                raw_paths.extend(candidate_paths)
+            elif isinstance(candidate_paths, str):
+                raw_paths.append(candidate_paths)
+
+    raw_paths.append(os.path.join(folder_paths.models_dir, "LLM"))
+
+    resolved = []
+    seen = set()
+    for raw in raw_paths:
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(path)
+
+    return resolved
 
 
 class Qwen35:
@@ -131,11 +168,23 @@ class Qwen35:
     CATEGORY = "Qwen3.5"
 
     @staticmethod
-    def _get_model_path(model_name: str):
-        """Get the local model path, creating the directory if needed."""
-        llm_dir = os.path.join(folder_paths.models_dir, "LLM")
-        os.makedirs(llm_dir, exist_ok=True)
-        return os.path.join(llm_dir, model_name)
+    def _get_model_path(model_name: str) -> Path:
+        """Resolve model folder from ComfyUI qwen3_5 paths without downloading."""
+        searched_dirs = []
+        for base_dir in _get_qwen_base_dirs():
+            candidate_dir = base_dir / model_name
+            searched_dirs.append(str(candidate_dir))
+            if (candidate_dir / "config.json").is_file():
+                return candidate_dir
+
+        searched = "\n  - ".join(searched_dirs) if searched_dirs else "(no qwen3_5 paths configured)"
+        raise FileNotFoundError(
+            "[Qwen3.5] Model files not found. Automatic downloads are disabled.\n"
+            f"Requested model: {model_name}\n"
+            "Expected transformers layout with config.json at one of:\n"
+            f"  - {searched}\n"
+            "Configure ComfyUI extra model paths under key 'qwen3_5' or place models in ComfyUI/models/LLM/."
+        )
 
     @staticmethod
     def _tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
@@ -159,8 +208,7 @@ class Qwen35:
     @classmethod
     def _load_model(cls, model_name: str, quantization: str, keep_model_loaded: bool):
         """Load or reuse the model based on current config."""
-        repo_id = MODELS[model_name]
-        signature = f"{repo_id}_{quantization}"
+        signature = f"{model_name}_{quantization}"
 
         if cls.model is not None and cls.current_signature == signature:
             print(f"[Qwen3.5] Reusing loaded {model_name} ({quantization})")
@@ -170,15 +218,6 @@ class Qwen35:
             cls._clear()
 
         model_path = cls._get_model_path(model_name)
-
-        # Download if not present
-        if not os.path.exists(os.path.join(model_path, "config.json")):
-            print(f"[Qwen3.5] Downloading {repo_id}...")
-            snapshot_download(
-                repo_id=repo_id,
-                local_dir=model_path,
-                ignore_patterns=["*.gguf"],
-            )
 
         # Build quantization config
         quant_config = None
@@ -219,12 +258,12 @@ class Qwen35:
 
         print(f"[Qwen3.5] Loading {model_name} ({quantization})...")
         cls.model = AutoVLModel.from_pretrained(
-            model_path,
+            str(model_path),
             **load_kwargs,
         ).eval()
 
-        cls.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
-        cls.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        cls.processor = AutoProcessor.from_pretrained(str(model_path), trust_remote_code=True)
+        cls.tokenizer = AutoTokenizer.from_pretrained(str(model_path), trust_remote_code=True)
         cls.current_signature = signature
         print("[Qwen3.5] Model loaded.")
 

@@ -15,7 +15,6 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
-from huggingface_hub import hf_hub_download
 
 import folder_paths
 
@@ -27,6 +26,7 @@ MODELS = {
     "Qwen3.5-27B": "unsloth/Qwen3.5-27B-GGUF",
 }
 MODEL_OPTIONS = list(MODELS.keys())
+QWEN_PATH_KEY = "qwen3_5"
 
 QUANTIZATIONS = [
     "Q4_K_XL",
@@ -57,6 +57,43 @@ MMPROJ_FILENAME = "mmproj-BF16.gguf"
 THINK_BLOCK_RE = re.compile(
     r"<think[^>]*>.*?</think>", flags=re.IGNORECASE | re.DOTALL
 )
+
+
+def _get_qwen_base_dirs() -> list[Path]:
+    """Return configured qwen3_5 search roots, always including models/LLM fallback."""
+    raw_paths = []
+    get_folder_paths = getattr(folder_paths, "get_folder_paths", None)
+    if callable(get_folder_paths):
+        try:
+            raw_paths.extend(get_folder_paths(QWEN_PATH_KEY) or [])
+        except Exception:
+            pass
+
+    if not raw_paths:
+        names_and_paths = getattr(folder_paths, "folder_names_and_paths", {})
+        entry = names_and_paths.get(QWEN_PATH_KEY)
+        if isinstance(entry, (tuple, list)) and entry:
+            candidate_paths = entry[0]
+            if isinstance(candidate_paths, (tuple, list, set)):
+                raw_paths.extend(candidate_paths)
+            elif isinstance(candidate_paths, str):
+                raw_paths.append(candidate_paths)
+
+    raw_paths.append(os.path.join(folder_paths.models_dir, "LLM"))
+
+    resolved = []
+    seen = set()
+    for raw in raw_paths:
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(path)
+
+    return resolved
 
 
 class Qwen35GGUF:
@@ -157,9 +194,14 @@ class Qwen35GGUF:
 
     @staticmethod
     def _get_model_dir(model_name: str) -> Path:
-        model_dir = Path(folder_paths.models_dir) / "LLM" / f"{model_name}-GGUF"
-        model_dir.mkdir(parents=True, exist_ok=True)
-        return model_dir
+        """Resolve GGUF model directory from ComfyUI qwen3_5 paths."""
+        model_subdir = f"{model_name}-GGUF"
+        base_dirs = _get_qwen_base_dirs()
+        for base_dir in base_dirs:
+            candidate = base_dir / model_subdir
+            if candidate.is_dir():
+                return candidate
+        return base_dirs[0] / model_subdir
 
     @staticmethod
     def _gguf_filename(model_name: str, quantization: str) -> str:
@@ -169,25 +211,30 @@ class Qwen35GGUF:
 
     @staticmethod
     def _ensure_model(model_name: str, quantization: str) -> tuple[Path, Path]:
-        """Download GGUF model + mmproj if not present."""
-        repo_id = MODELS[model_name]
+        """Resolve GGUF model + mmproj paths without downloading."""
         model_dir = Qwen35GGUF._get_model_dir(model_name)
         model_filename = Qwen35GGUF._gguf_filename(model_name, quantization)
         model_path = model_dir / model_filename
         mmproj_path = model_dir / MMPROJ_FILENAME
 
-        for filename, path in [
-            (model_filename, model_path),
-            (MMPROJ_FILENAME, mmproj_path),
-        ]:
-            if not path.exists():
-                print(f"[Qwen3.5 GGUF] Downloading {filename} from {repo_id}...")
-                hf_hub_download(
-                    repo_id=repo_id,
-                    filename=filename,
-                    local_dir=str(model_dir),
-                )
-                print(f"[Qwen3.5 GGUF] Downloaded {filename}")
+        missing = []
+        if not model_path.is_file():
+            missing.append(model_filename)
+        if not mmproj_path.is_file():
+            missing.append(MMPROJ_FILENAME)
+
+        if missing:
+            searched_dirs = [str(base / f"{model_name}-GGUF") for base in _get_qwen_base_dirs()]
+            searched = "\n  - ".join(searched_dirs) if searched_dirs else "(no qwen3_5 paths configured)"
+            raise FileNotFoundError(
+                "[Qwen3.5 GGUF] Required GGUF files not found. Automatic downloads are disabled.\n"
+                f"Requested model: {model_name}\n"
+                f"Requested quantization: {quantization}\n"
+                f"Missing files: {', '.join(missing)}\n"
+                "Expected files at one of:\n"
+                f"  - {searched}\n"
+                "Configure ComfyUI extra model paths under key 'qwen3_5' or place files in ComfyUI/models/LLM/."
+            )
 
         return model_path, mmproj_path
 

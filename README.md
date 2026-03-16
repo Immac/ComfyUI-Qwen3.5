@@ -58,9 +58,24 @@ pip install -r ComfyUI-Qwen3.5/requirements.txt \
 
 ---
 
-## Model Paths (Manual Placement)
+## Model Paths (`qwen3_5`)
 
-Both nodes look for models inside `ComfyUI/models/LLM/`. Models are auto-downloaded on first use, but you can place them manually to avoid downloads.
+Both local nodes now use a ComfyUI-native model path key named `qwen3_5`.
+
+- Automatic downloads are disabled.
+- Models must already exist on disk.
+- `ComfyUI/models/LLM/` is registered as the default `qwen3_5` path.
+- You can add as many additional model directories as needed via ComfyUI extra model paths.
+
+Example `extra_model_paths.yaml`:
+
+```yaml
+qwen3_5:
+    - /mnt/fast_models/qwen
+    - /home/user/shared_models/qwen
+```
+
+The node searches all configured `qwen3_5` paths in order.
 
 ### Transformers node
 
@@ -82,8 +97,6 @@ ComfyUI/models/LLM/Qwen3.5-9B/
 ├── tokenizer_config.json
 └── ...
 ```
-
-The node checks for `config.json` in that directory — if it exists, no download happens.
 
 You can download the model files manually from HuggingFace:
 - [Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B) → `ComfyUI/models/LLM/Qwen3.5-0.8B/`
