@@ -188,7 +188,7 @@ Works on both GPU (CUDA) and CPU. On CPU, models load in FP32 (slower but functi
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
-| `model` | dropdown | Qwen3.5-9B | Model size (0.8B / 2B / 4B / 9B / 27B) |
+| `clip` | QWEN35_MODEL | from Loader | Connect output of **Qwen 3.5 Loader** |
 | `prompt` | STRING | required | Text prompt for the model |
 | `system_prompt` | STRING | `""` | Optional system prompt |
 | `max_tokens` | INT | 4096 | Maximum tokens to generate |
@@ -204,7 +204,9 @@ Works on both GPU (CUDA) and CPU. On CPU, models load in FP32 (slower but functi
 | `video` | IMAGE | optional | Video frames (batch of images) |
 | `frame_count` | INT | 16 | Max frames to sample from video |
 
-### Supported Models
+Model selection is handled by **Qwen 3.5 Loader**, which discovers local models from `qwen3_5` paths (folders containing `config.json`).
+
+### Common Model Sizes
 
 | Model | Parameters | VRAM (FP16) | VRAM (8-bit) | VRAM (4-bit) |
 |-------|-----------|-------------|-------------|-------------|
@@ -226,7 +228,7 @@ Works on both GPU and CPU. For CPU-only, set `n_gpu_layers` to `0` and build lla
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
-| `model` | dropdown | Qwen3.5-9B | Model size (0.8B / 2B / 4B / 9B / 27B) |
+| `model` | dropdown | first discovered (or Qwen3.5-9B) | Auto-discovered from `qwen3_5` model paths (folders ending with `-GGUF`) |
 | `quantization` | dropdown | Q4_K_XL | GGUF quantization level |
 | `prompt` | STRING | required | Text prompt for the model |
 | `system_prompt` | STRING | `""` | Optional system prompt |

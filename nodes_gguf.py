@@ -18,15 +18,8 @@ from PIL import Image
 
 import folder_paths
 
-MODELS = {
-    "Qwen3.5-0.8B": "unsloth/Qwen3.5-0.8B-GGUF",
-    "Qwen3.5-2B": "unsloth/Qwen3.5-2B-GGUF",
-    "Qwen3.5-4B": "unsloth/Qwen3.5-4B-GGUF",
-    "Qwen3.5-9B": "unsloth/Qwen3.5-9B-GGUF",
-    "Qwen3.5-27B": "unsloth/Qwen3.5-27B-GGUF",
-}
-MODEL_OPTIONS = list(MODELS.keys())
 QWEN_PATH_KEY = "qwen3_5"
+NO_GGUF_MODELS = "<no gguf models found>"
 
 QUANTIZATIONS = [
     "Q4_K_XL",
@@ -96,16 +89,37 @@ def _get_qwen_base_dirs() -> list[Path]:
     return resolved
 
 
+def _discover_gguf_models() -> list[str]:
+    """Discover local GGUF model folders recursively from configured qwen3_5 paths."""
+    discovered = set()
+    for base_dir in _get_qwen_base_dirs():
+        if not base_dir.is_dir():
+            continue
+        for child in base_dir.rglob("*-GGUF"):
+            if not child.is_dir():
+                continue
+            model_name = child.name[:-5]
+            has_model_file = any(item.is_file() and item.suffix == ".gguf" for item in child.iterdir())
+            if model_name and has_model_file:
+                discovered.add(model_name)
+    return sorted(discovered, key=str.lower)
+
+
 class Qwen35GGUF:
     """Qwen3.5 GGUF node — fast inference via llama.cpp."""
 
     @classmethod
     def INPUT_TYPES(cls):
+        model_options = _discover_gguf_models()
+        if not model_options:
+            model_options = [NO_GGUF_MODELS]
+        default_model = "Qwen3.5-9B" if "Qwen3.5-9B" in model_options else model_options[0]
+
         return {
             "required": {
-                "model": (MODEL_OPTIONS, {
-                    "default": "Qwen3.5-9B",
-                    "tooltip": "Model size. 0.8B ~1GB, 2B ~2GB, 4B ~3GB, 9B ~6GB, 27B ~17GB (Q4)",
+                "model": (model_options, {
+                    "default": default_model,
+                    "tooltip": "Discovered from qwen3_5 model paths (folders ending with -GGUF).",
                 }),
                 "quantization": (QUANTIZATIONS, {
                     "default": "Q4_K_XL",
@@ -201,6 +215,14 @@ class Qwen35GGUF:
             candidate = base_dir / model_subdir
             if candidate.is_dir():
                 return candidate
+
+        for base_dir in base_dirs:
+            if not base_dir.is_dir():
+                continue
+            for candidate in base_dir.rglob(model_subdir):
+                if candidate.is_dir():
+                    return candidate
+
         return base_dirs[0] / model_subdir
 
     @staticmethod
@@ -212,6 +234,13 @@ class Qwen35GGUF:
     @staticmethod
     def _ensure_model(model_name: str, quantization: str) -> tuple[Path, Path]:
         """Resolve GGUF model + mmproj paths without downloading."""
+        if model_name == NO_GGUF_MODELS:
+            raise FileNotFoundError(
+                "[Qwen3.5 GGUF] No local GGUF model folders found in configured qwen3_5 paths. "
+                "Add a <model>-GGUF folder with .gguf files under ComfyUI/models/LLM/ "
+                "or an extra qwen3_5 path."
+            )
+
         model_dir = Qwen35GGUF._get_model_dir(model_name)
         model_filename = Qwen35GGUF._gguf_filename(model_name, quantization)
         model_path = model_dir / model_filename

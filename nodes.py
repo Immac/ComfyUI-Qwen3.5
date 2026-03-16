@@ -22,17 +22,10 @@ from transformers import AutoProcessor, AutoTokenizer, BitsAndBytesConfig
 
 import folder_paths
 
-MODELS = {
-    "Qwen3.5-0.8B": "Qwen/Qwen3.5-0.8B",
-    "Qwen3.5-2B": "Qwen/Qwen3.5-2B",
-    "Qwen3.5-4B": "Qwen/Qwen3.5-4B",
-    "Qwen3.5-9B": "Qwen/Qwen3.5-9B",
-    "Qwen3.5-27B": "Qwen/Qwen3.5-27B",
-}
-MODEL_OPTIONS = list(MODELS.keys())
 QUANTIZATION_OPTIONS = ["FP16", "8-bit", "4-bit"]
 THINK_BLOCK_RE = re.compile(r"<think[^>]*>.*?</think>", flags=re.IGNORECASE | re.DOTALL)
 QWEN_PATH_KEY = "qwen3_5"
+NO_TRANSFORMERS_MODELS = "<no transformers models found>"
 
 
 def _get_qwen_base_dirs() -> list[Path]:
@@ -72,6 +65,23 @@ def _get_qwen_base_dirs() -> list[Path]:
     return resolved
 
 
+def _discover_transformers_models() -> list[str]:
+    """Discover local transformers model folders recursively from qwen3_5 paths."""
+    discovered = set()
+    for base_dir in _get_qwen_base_dirs():
+        if not base_dir.is_dir():
+            continue
+        for config_path in base_dir.rglob("config.json"):
+            model_dir = config_path.parent
+            try:
+                relative = model_dir.relative_to(base_dir).as_posix()
+            except ValueError:
+                continue
+            if relative and not relative.startswith("."):
+                discovered.add(relative)
+    return sorted(discovered, key=str.lower)
+
+
 class Qwen35:
     """Qwen3.5 unified multimodal node for ComfyUI."""
 
@@ -84,10 +94,7 @@ class Qwen35:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model": (MODEL_OPTIONS, {
-                    "default": "Qwen3.5-9B",
-                    "tooltip": "Model size. 0.8B ~2GB, 2B ~5GB, 4B ~9GB, 9B ~20GB, 27B ~56GB (FP16)",
-                }),
+                "clip": ("QWEN35_MODEL", {"tooltip": "Model handle from Qwen 3.5 Loader."}),
                 "prompt": ("STRING", {
                     "default": "Describe this image in detail.",
                     "multiline": True,
@@ -177,6 +184,15 @@ class Qwen35:
             if (candidate_dir / "config.json").is_file():
                 return candidate_dir
 
+        # Compatibility: if model_name is only a leaf dir name, allow nested lookup.
+        for base_dir in _get_qwen_base_dirs():
+            if not base_dir.is_dir():
+                continue
+            for config_path in base_dir.rglob("config.json"):
+                model_dir = config_path.parent
+                if model_dir.name == model_name:
+                    return model_dir
+
         searched = "\n  - ".join(searched_dirs) if searched_dirs else "(no qwen3_5 paths configured)"
         raise FileNotFoundError(
             "[Qwen3.5] Model files not found. Automatic downloads are disabled.\n"
@@ -208,6 +224,13 @@ class Qwen35:
     @classmethod
     def _load_model(cls, model_name: str, quantization: str, keep_model_loaded: bool):
         """Load or reuse the model based on current config."""
+        if model_name == NO_TRANSFORMERS_MODELS:
+            raise FileNotFoundError(
+                "[Qwen3.5] No local transformers models found in configured qwen3_5 paths. "
+                "Add a model folder containing config.json under ComfyUI/models/LLM/ "
+                "or an extra qwen3_5 path."
+            )
+
         signature = f"{model_name}_{quantization}"
 
         if cls.model is not None and cls.current_signature == signature:
@@ -386,7 +409,7 @@ class Qwen35:
 
     def process(
         self,
-        model: str,
+        clip,
         prompt: str,
         system_prompt: str,
         max_tokens: int,
@@ -402,6 +425,13 @@ class Qwen35:
         video=None,
         frame_count: int = 16,
     ):
+        model = str(clip).strip() if clip is not None else ""
+        if not model:
+            raise ValueError("[Qwen3.5] Invalid model handle. Connect Qwen 3.5 Loader to the clip input.")
+
+        if quantization not in QUANTIZATION_OPTIONS:
+            raise ValueError(f"[Qwen3.5] Unsupported quantization: {quantization}")
+
         torch.manual_seed(seed)
 
         Qwen35._load_model(model, quantization, keep_model_loaded)
@@ -428,3 +458,34 @@ class Qwen35:
 
 NODE_CLASS_MAPPINGS = {"Qwen35": Qwen35}
 NODE_DISPLAY_NAME_MAPPINGS = {"Qwen35": "Qwen 3.5"}
+
+
+class Qwen35Loader:
+    """Model loader for Qwen3.5 local transformers models."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        model_options = _discover_transformers_models()
+        if not model_options:
+            model_options = [NO_TRANSFORMERS_MODELS]
+        default_model = "Qwen3.5-9B" if "Qwen3.5-9B" in model_options else model_options[0]
+        return {
+            "required": {
+                "model": (model_options, {
+                    "default": default_model,
+                    "tooltip": "Discovered from qwen3_5 model paths (folders containing config.json).",
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("QWEN35_MODEL",)
+    RETURN_NAMES = ("clip",)
+    FUNCTION = "load"
+    CATEGORY = "Qwen3.5"
+
+    def load(self, model: str):
+        return (model,)
+
+
+NODE_CLASS_MAPPINGS["Qwen35Loader"] = Qwen35Loader
+NODE_DISPLAY_NAME_MAPPINGS["Qwen35Loader"] = "Qwen 3.5 Loader"
