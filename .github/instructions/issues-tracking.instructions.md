@@ -4,21 +4,21 @@ name: "Issues Tracking Workflow"
 ---
 # Issues Tracking Workflow
 
-Use the repository-level `issues/` folder as persistent issue memory during review and debug work.
+Use the repository-level `.github/issues/` folder as persistent issue memory during review and debug work.
 
 ## Structure
 
 - Keep status folders:
-  - `issues/found/`: Newly discovered or active issues.
-  - `issues/deferred/`: Issues postponed by decision, dependency, or approval wait.
-  - `issues/solved/`: Issues fixed and verified.
-- Keep `issues/index.md` updated as the single lookup table for all issues.
+  - `.github/issues/found/`: Newly discovered or active issues.
+  - `.github/issues/deferred/`: Issues postponed by decision, dependency, or approval wait.
+  - `.github/issues/solved/`: Issues fixed and verified.
+- Keep `.github/issues/index.md` updated as the single lookup table for all issues.
 
 ## Required Issue Entry Format
 
 Create one markdown file per issue using:
 
-- Path: `issues/<status>/<ID>-short-slug.md` where `<ID>` is a short tag such as `QWEN-001`
+- Path: `.github/issues/<status>/<ID>-short-slug.md` where `<ID>` is a short tag such as `QWEN-001`
 - Sections:
   - `## ID`
   - `# <Issue Title>`
@@ -30,7 +30,7 @@ Create one markdown file per issue using:
 
 ## Index Rules
 
-- `issues/index.md` must include every issue in all three status folders.
+- `.github/issues/index.md` must include every issue in all three status folders.
 - For each issue, include: ID, title, status, area/file, last update date, and issue file path.
 - Update the index whenever an issue is created, moved, solved, or deferred.
 - When status changes, move the file to the matching status folder and update the index row.
