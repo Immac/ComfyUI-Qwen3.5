@@ -10,12 +10,14 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
 import torch
 from PIL import Image
 
+import comfy.model_management
 import folder_paths
 
 QWEN_PATH_KEY = "qwen3_5"
@@ -367,17 +369,41 @@ class Qwen35GGUF:
         cmd.extend(["-p", full_prompt])
 
         print(f"[Qwen3.5 GGUF] Running inference ({model_path.name})...")
-        result = subprocess.run(
+        process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=300,
         )
 
-        if result.returncode != 0:
-            stderr = result.stderr.strip()
+        try:
+            deadline = time.monotonic() + 300
+            while process.poll() is None:
+                comfy.model_management.throw_exception_if_processing_interrupted()
+                if time.monotonic() >= deadline:
+                    process.kill()
+                    process.wait()
+                    raise RuntimeError("[Qwen3.5 GGUF] Inference timed out after 300 seconds.")
+                time.sleep(0.1)
+            stdout, stderr = process.communicate()
+        except comfy.model_management.InterruptProcessingException:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise
+        except Exception:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            raise
+
+        if process.returncode != 0:
+            stderr = stderr.strip()
             # Filter out common warning lines
             error_lines = [
                 line for line in stderr.split("\n")
@@ -388,10 +414,10 @@ class Qwen35GGUF:
             ]
             error_msg = "\n".join(error_lines) if error_lines else stderr[-500:]
             raise RuntimeError(
-                f"[Qwen3.5 GGUF] Inference failed (exit {result.returncode}): {error_msg}"
+                f"[Qwen3.5 GGUF] Inference failed (exit {process.returncode}): {error_msg}"
             )
 
-        return result.stdout
+        return stdout
 
     @staticmethod
     def _extract_thinking(text: str) -> tuple[str, str]:

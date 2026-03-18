@@ -13,19 +13,31 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
+import comfy.model_management
 
 try:
     from transformers import AutoModelForImageTextToText as AutoVLModel
 except ImportError:
     from transformers import AutoModelForVision2Seq as AutoVLModel
-from transformers import AutoProcessor, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoProcessor, AutoTokenizer, BitsAndBytesConfig, StoppingCriteria, StoppingCriteriaList
 
 import folder_paths
 
 QUANTIZATION_OPTIONS = ["FP16", "8-bit", "4-bit"]
 THINK_BLOCK_RE = re.compile(r"<think[^>]*>.*?</think>", flags=re.IGNORECASE | re.DOTALL)
+# Matches Qwen-style special tokens like <|im_end|>, <|endoftext|> that remain
+# when decoding with skip_special_tokens=False.
+_QWEN_SPECIAL_RE = re.compile(r"<\|[^|]*\|>")
 QWEN_PATH_KEY = "qwen3_5"
 NO_TRANSFORMERS_MODELS = "<no transformers models found>"
+
+
+class _InterruptStoppingCriteria(StoppingCriteria):
+    """Abort generation as soon as ComfyUI marks the prompt interrupted."""
+
+    def __call__(self, input_ids, scores, **kwargs):
+        comfy.model_management.throw_exception_if_processing_interrupted()
+        return False
 
 
 def _get_qwen_base_dirs() -> list[Path]:
@@ -94,7 +106,7 @@ class Qwen35:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "clip": ("QWEN35_MODEL", {"tooltip": "Model handle from Qwen 3.5 Loader."}),
+                "model": ("QWEN35_MODEL", {"tooltip": "Model handle from Qwen 3.5 Loader."}),
                 "prompt": ("STRING", {
                     "default": "Describe this image in detail.",
                     "multiline": True,
@@ -333,13 +345,25 @@ class Qwen35:
         user_content.append({"type": "text", "text": prompt})
         messages.append({"role": "user", "content": user_content})
 
-        # Apply chat template with thinking mode control
-        chat = cls.processor.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            chat_template_kwargs={"enable_thinking": enable_thinking},
-        )
+        # Apply chat template with thinking mode control.
+        # Base models may lack a chat template on the processor; fall back to the
+        # tokenizer. Also handle older transformers that don't accept chat_template_kwargs.
+        def _apply_template(fn):
+            try:
+                return fn(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    chat_template_kwargs={"enable_thinking": enable_thinking},
+                )
+            except TypeError:
+                # chat_template_kwargs not supported by this transformers version
+                return fn(messages, tokenize=False, add_generation_prompt=True)
+
+        try:
+            chat = _apply_template(cls.processor.apply_chat_template)
+        except Exception:
+            chat = _apply_template(cls.tokenizer.apply_chat_template)
 
         # Process inputs
         images = [item["image"] for item in user_content if item.get("type") == "image"]
@@ -379,6 +403,7 @@ class Qwen35:
             "repetition_penalty": repetition_penalty,
             "eos_token_id": stop_tokens,
             "pad_token_id": cls.tokenizer.pad_token_id,
+            "stopping_criteria": StoppingCriteriaList([_InterruptStoppingCriteria()]),
         }
 
         outputs = cls.model.generate(**model_inputs, **gen_kwargs)
@@ -389,11 +414,13 @@ class Qwen35:
         # Decode — trim input tokens
         input_len = model_inputs["input_ids"].shape[-1]
         generated = outputs[0, input_len:]
-        text = cls.tokenizer.decode(generated, skip_special_tokens=True).strip()
+        # Decode with skip_special_tokens=False so that <think>...</think> markers
+        # are preserved — Qwen3/Qwen3.5 registers them as special tokens and
+        # skip_special_tokens=True would silently strip them, breaking extraction.
+        text = cls.tokenizer.decode(generated, skip_special_tokens=False).strip()
 
         # Extract thinking content and clean response separately.
-        # Handle both <think>...</think> and cases where <think> was consumed
-        # by skip_special_tokens but </think> remains.
+        # Handle both <think>...</think> and cases where only </think> remains.
         thinking = ""
         match = THINK_BLOCK_RE.search(text)
         if match:
@@ -405,11 +432,16 @@ class Qwen35:
                 thinking = parts[0].strip()
             text = parts[1].strip()
 
+        # Strip residual Qwen special tokens (e.g. <|im_end|>, <|endoftext|>)
+        # that appear because we decoded with skip_special_tokens=False.
+        text = _QWEN_SPECIAL_RE.sub("", text).strip()
+        thinking = _QWEN_SPECIAL_RE.sub("", thinking).strip()
+
         return text, thinking
 
     def process(
         self,
-        clip,
+        model,
         prompt: str,
         system_prompt: str,
         max_tokens: int,
@@ -425,9 +457,9 @@ class Qwen35:
         video=None,
         frame_count: int = 16,
     ):
-        model = str(clip).strip() if clip is not None else ""
+        model = str(model).strip() if model is not None else ""
         if not model:
-            raise ValueError("[Qwen3.5] Invalid model handle. Connect Qwen 3.5 Loader to the clip input.")
+            raise ValueError("[Qwen3.5] Invalid model handle. Connect Qwen 3.5 Loader to the model input.")
 
         if quantization not in QUANTIZATION_OPTIONS:
             raise ValueError(f"[Qwen3.5] Unsupported quantization: {quantization}")
@@ -479,7 +511,7 @@ class Qwen35Loader:
         }
 
     RETURN_TYPES = ("QWEN35_MODEL",)
-    RETURN_NAMES = ("clip",)
+    RETURN_NAMES = ("model",)
     FUNCTION = "load"
     CATEGORY = "Qwen3.5"
 

@@ -240,7 +240,7 @@ This node follows the normal ComfyUI loader/consumer pattern:
 
 1. **Qwen 3.5 Loader** discovers local checkpoints from `qwen3_5` paths.
 2. It outputs a `QWEN35_MODEL` handle.
-3. **Qwen 3.5** consumes that handle through its `clip` input.
+3. **Qwen 3.5** consumes that handle through its `model` input.
 
 ### Inputs
 
@@ -252,7 +252,7 @@ This node follows the normal ComfyUI loader/consumer pattern:
 
 | Output | Type | Description |
 |--------|------|-------------|
-| `clip` | QWEN35_MODEL | Model handle passed into **Qwen 3.5** |
+| `model` | QWEN35_MODEL | Model handle passed into **Qwen 3.5** |
 
 If no local transformers models are found, the dropdown will show a placeholder instead of downloading anything.
 
@@ -264,13 +264,13 @@ Transformers-based node. Found under **Qwen3.5** in the node menu. Supports imag
 
 Works on both GPU (CUDA) and CPU. On CPU, models load in FP32 (slower but functional).
 
-Connect the `clip` input to **Qwen 3.5 Loader**. This node does not own model discovery itself.
+Connect the `model` input to **Qwen 3.5 Loader**. This node does not own model discovery itself.
 
 ### Inputs
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
-| `clip` | QWEN35_MODEL | from Loader | Connect output of **Qwen 3.5 Loader** |
+| `model` | QWEN35_MODEL | from Loader | Connect output of **Qwen 3.5 Loader** |
 | `prompt` | STRING | required | Text prompt for the model |
 | `system_prompt` | STRING | `""` | Optional system prompt |
 | `max_tokens` | INT | 4096 | Maximum tokens to generate |
